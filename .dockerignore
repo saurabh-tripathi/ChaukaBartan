@@ -1,0 +1,13 @@
+.git
+.venv
+__pycache__
+*.pyc
+*.pyo
+.env
+.env.*
+!.env.example
+tests/
+.pytest_cache/
+infrastructure/
+*.md
+.python-version
