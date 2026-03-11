@@ -1,8 +1,11 @@
 locals {
-  name                   = "${var.project_name}-${var.environment}"
-  tags                   = { Project = var.project_name, Environment = var.environment }
-  https_enabled          = var.domain_name != ""
-  dns_validation_enabled = var.domain_name != "" && var.hosted_zone_id != ""
+  name          = "${var.project_name}-${var.environment}"
+  tags          = { Project = var.project_name, Environment = var.environment }
+  # Both conditions collapse to the same check — domain_name is a static variable
+  # known at plan time, so Terraform can use it safely in count/for_each.
+  # hosted_zone_id comes from module.dns[0].zone_id (unknown until apply), so we
+  # cannot use it here; when root_domain is set the zone always exists.
+  https_enabled = var.domain_name != ""
 }
 
 # ── Load Balancer ─────────────────────────────────────────────────────────────
@@ -100,7 +103,7 @@ resource "aws_acm_certificate" "app" {
 }
 
 resource "aws_route53_record" "cert_validation" {
-  for_each = local.dns_validation_enabled ? {
+  for_each = local.https_enabled ? {
     for dvo in aws_acm_certificate.app[0].domain_validation_options :
     dvo.domain_name => {
       name   = dvo.resource_record_name
@@ -117,7 +120,7 @@ resource "aws_route53_record" "cert_validation" {
 }
 
 resource "aws_acm_certificate_validation" "app" {
-  count           = local.dns_validation_enabled ? 1 : 0
+  count           = local.https_enabled ? 1 : 0
   certificate_arn = aws_acm_certificate.app[0].arn
   validation_record_fqdns = [
     for r in aws_route53_record.cert_validation : r.fqdn
@@ -127,7 +130,7 @@ resource "aws_acm_certificate_validation" "app" {
 # ── Route 53 A record — subdomain → ALB ───────────────────────────────────────
 
 resource "aws_route53_record" "app" {
-  count   = local.dns_validation_enabled ? 1 : 0
+  count   = local.https_enabled ? 1 : 0
   zone_id = var.hosted_zone_id
   name    = var.domain_name
   type    = "A"
