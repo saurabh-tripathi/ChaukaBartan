@@ -18,6 +18,8 @@ class HabitCreate(BaseModel):
     status: HabitStatus = HabitStatus.ACTIVE
     started_at: Optional[datetime] = None
     set_at: Optional[datetime] = None
+    expected_duration_minutes: Optional[int] = None
+    tags: list[str] = []
 
 
 class HabitUpdate(BaseModel):
@@ -31,6 +33,8 @@ class HabitUpdate(BaseModel):
     started_at: Optional[datetime] = None
     set_at: Optional[datetime] = None
     streak_count: Optional[int] = None
+    expected_duration_minutes: Optional[int] = None
+    tags: Optional[list[str]] = None
 
 
 class HabitResponse(BaseModel):
@@ -47,6 +51,8 @@ class HabitResponse(BaseModel):
     started_at: Optional[datetime]
     set_at: Optional[datetime]
     streak_count: int
+    expected_duration_minutes: Optional[int]
+    tags: list[str]
     created_at: datetime
     updated_at: datetime
 

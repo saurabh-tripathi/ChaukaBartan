@@ -16,7 +16,7 @@ from sqlalchemy import (
     UniqueConstraint,
     func,
 )
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import ARRAY, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base, TimestampMixin
@@ -71,6 +71,8 @@ class Task(TimestampMixin, Base):
     importance_note: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     end_date: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    expected_duration_minutes: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    tags: Mapped[list[str]] = mapped_column(ARRAY(String), nullable=False, server_default="{}")
 
     parent_task_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True),

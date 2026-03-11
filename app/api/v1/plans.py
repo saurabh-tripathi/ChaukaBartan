@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session, selectinload
 
 from app.core.database import get_db
-from app.models.habit import Habit
+from app.models.habit import Habit, HabitLog
 from app.models.plan import Plan, PlanItem, PlanStatus
 from app.models.task import Task, TaskInstance
 from app.modules.plan.builder import generate_plan
@@ -31,6 +31,33 @@ _PLAN_DETAIL_OPTIONS = [
 ]
 
 
+def _patch_habit_streaks(plan: Plan, db: Session) -> None:
+    """Set streak_count in-memory for all habit plan items based on actual logs."""
+    today = date.today()
+    yesterday = today - timedelta(days=1)
+    for item in plan.items:
+        habit = item.habit
+        if habit is None:
+            continue
+        logs = (
+            db.query(HabitLog)
+            .filter(HabitLog.habit_id == habit.id)
+            .order_by(HabitLog.logged_date.desc())
+            .all()
+        )
+        dates = sorted({log.logged_date for log in logs}, reverse=True)
+        if not dates or dates[0] < yesterday:
+            habit.streak_count = 0
+            continue
+        streak = 1
+        for i in range(1, len(dates)):
+            if dates[i] == dates[i - 1] - timedelta(days=1):
+                streak += 1
+            else:
+                break
+        habit.streak_count = streak
+
+
 def _load_plan_detail(plan_id: uuid.UUID, db: Session) -> Plan:
     plan = (
         db.query(Plan)
@@ -40,6 +67,7 @@ def _load_plan_detail(plan_id: uuid.UUID, db: Session) -> Plan:
     )
     if not plan:
         raise HTTPException(status_code=404, detail="Plan not found")
+    _patch_habit_streaks(plan, db)
     return plan
 
 

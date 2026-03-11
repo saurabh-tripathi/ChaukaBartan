@@ -1,10 +1,19 @@
 const BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
+function getSessionToken(): string {
+  if (typeof document === "undefined") return "";
+  const m = document.cookie.match(/(?:^|; )cb_session=([^;]*)/);
+  return m ? decodeURIComponent(m[1]) : "";
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, {
-    headers: { "Content-Type": "application/json", ...init?.headers },
-    ...init,
-  });
+  const token = getSessionToken();
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    ...(init?.headers as Record<string, string> | undefined),
+  };
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+  const res = await fetch(`${BASE}${path}`, { ...init, headers });
   if (!res.ok) {
     const text = await res.text();
     throw new Error(`${res.status} ${res.statusText}: ${text}`);
@@ -25,10 +34,11 @@ export const Goals = {
 
 // ── Tasks ──────────────────────────────────────────────────────────────────
 export const Tasks = {
-  list: (params?: { active_only?: boolean; goal_id?: string }) => {
+  list: (params?: { active_only?: boolean; goal_id?: string; tags?: string[] }) => {
     const q = new URLSearchParams();
     if (params?.active_only !== undefined) q.set("active_only", String(params.active_only));
     if (params?.goal_id) q.set("goal_id", params.goal_id);
+    if (params?.tags?.length) params.tags.forEach((t) => q.append("tags", t));
     return request<Task[]>(`/api/v1/tasks${q.toString() ? "?" + q : ""}`);
   },
   get: (id: string) => request<Task>(`/api/v1/tasks/${id}`),
@@ -44,6 +54,15 @@ export const Tasks = {
     request<TaskFeedback>(`/api/v1/tasks/${taskId}/instances/${instanceId}/feedback`),
   createFeedback: (taskId: string, instanceId: string, body: FeedbackCreate) =>
     request<TaskFeedback>(`/api/v1/tasks/${taskId}/instances/${instanceId}/feedback`, { method: "POST", body: JSON.stringify(body) }),
+  allInstances: (params?: { status?: string; from_date?: string; to_date?: string; goal_id?: string; search?: string }) => {
+    const q = new URLSearchParams();
+    if (params?.status) q.set("status", params.status);
+    if (params?.from_date) q.set("from_date", params.from_date);
+    if (params?.to_date) q.set("to_date", params.to_date);
+    if (params?.goal_id) q.set("goal_id", params.goal_id);
+    if (params?.search) q.set("search", params.search);
+    return request<FlatInstance[]>(`/api/v1/tasks/instances${q.toString() ? "?" + q : ""}`);
+  },
 };
 
 // ── Habits ─────────────────────────────────────────────────────────────────
@@ -97,7 +116,7 @@ export type TaskType = "CHORE" | "IMPROVEMENT";
 export type Frequency = "DAILY" | "WEEKLY" | "MONTHLY" | "QUARTERLY" | "HALF_YEARLY" | "YEARLY" | "ONE_TIME" | "AD_HOC";
 export type InstanceStatus = "PENDING" | "IN_PROGRESS" | "COMPLETED" | "SKIPPED";
 export type HabitFrequency = "DAILY" | "WEEKLY";
-export type HabitStatus = "ACTIVE" | "SET" | "LAPSED" | "ABANDONED";
+export type HabitStatus = "TODO" | "ACTIVE" | "SET" | "LAPSED" | "ABANDONED";
 export type PlanStatus = "DRAFT" | "ACTIVE" | "COMPLETED" | "ARCHIVED";
 export type ItemStatus = "PENDING" | "COMPLETED" | "SKIPPED";
 
@@ -124,12 +143,14 @@ export interface Task {
   task_type: TaskType; frequency: Frequency; priority: Priority;
   is_active: boolean; goal_id: string | null;
   end_date: string | null; importance_note: string | null;
+  expected_duration_minutes: number | null; tags: string[];
   created_at: string; updated_at: string;
 }
 export interface TaskCreate {
   title: string; description?: string; task_type: TaskType;
   frequency: Frequency; priority?: Priority; goal_id?: string;
   is_active?: boolean; end_date?: string;
+  expected_duration_minutes?: number; tags?: string[];
 }
 export interface TaskInstance {
   id: string; task_id: string; scheduled_date: string;
@@ -150,11 +171,28 @@ export interface Habit {
   id: string; title: string; description: string | null;
   frequency: HabitFrequency; priority: Priority; status: HabitStatus;
   streak_count: number; goal_id: string | null;
-  importance_note: string | null; created_at: string; updated_at: string;
+  importance_note: string | null;
+  expected_duration_minutes: number | null; tags: string[];
+  created_at: string; updated_at: string;
 }
 export interface HabitCreate {
   title: string; description?: string; frequency: HabitFrequency;
   priority?: Priority; goal_id?: string; status?: HabitStatus;
+  expected_duration_minutes?: number; tags?: string[];
+}
+
+export interface FlatInstance {
+  task_instance_id: string;
+  scheduled_date: string;
+  status: InstanceStatus;
+  task: {
+    id: string; title: string; goal_id: string | null; goal_title: string | null;
+    tags: string[]; expected_duration_minutes: number | null;
+  };
+  feedback: {
+    duration_minutes: number | null; difficulty_rating: number | null;
+    satisfaction_rating: number | null; notes: string | null;
+  } | null;
 }
 export interface HabitLog {
   id: string; habit_id: string; logged_date: string;

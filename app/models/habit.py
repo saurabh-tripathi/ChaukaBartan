@@ -4,7 +4,7 @@ from datetime import date, datetime
 from typing import TYPE_CHECKING, Optional
 
 from sqlalchemy import Date, DateTime, Enum, ForeignKey, Integer, String, Text, func
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import ARRAY, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base, TimestampMixin
@@ -21,6 +21,7 @@ class HabitFrequency(enum.Enum):
 
 
 class HabitStatus(enum.Enum):
+    TODO = "TODO"
     ACTIVE = "ACTIVE"
     SET = "SET"
     LAPSED = "LAPSED"
@@ -59,6 +60,8 @@ class Habit(TimestampMixin, Base):
         DateTime(timezone=True), nullable=True
     )
     streak_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    expected_duration_minutes: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    tags: Mapped[list[str]] = mapped_column(ARRAY(String), nullable=False, server_default="{}")
 
     goal: Mapped[Optional["Goal"]] = relationship(
         "Goal",

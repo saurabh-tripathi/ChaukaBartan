@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
-import { Plans, Tasks, Habits, Plan, PlanSummary, PlanItem, ItemStatus, Task, Habit } from "@/lib/api";
+import { Plans, Tasks, Habits, Plan, PlanSummary, PlanItem, Task, Habit } from "@/lib/api";
 import { Badge } from "@/components/Badge";
 
 export default function PlansPage() {
@@ -46,12 +46,6 @@ export default function PlansPage() {
     await Plans.delete(id).catch((e) => setError(e.message));
     if (selected?.id === id) setSelected(null);
     loadList();
-  };
-
-  const updateItem = async (item: PlanItem, status: ItemStatus) => {
-    if (!selected) return;
-    await Plans.updateItem(selected.id, item.id, { status });
-    refreshSelected();
   };
 
   const removeItem = async (item: PlanItem) => {
@@ -173,9 +167,6 @@ export default function PlansPage() {
                       </div>
                       <div className="flex items-center gap-2 shrink-0">
                         <Badge value={item.status} />
-                        <select className="text-xs border border-gray-200 rounded px-1 py-0.5 bg-white" value={item.status} onChange={(e) => updateItem(item, e.target.value as ItemStatus)}>
-                          {["PENDING", "COMPLETED", "SKIPPED"].map((s) => <option key={s}>{s}</option>)}
-                        </select>
                         <button onClick={() => removeItem(item)} className="text-xs text-red-400 hover:text-red-600 font-bold" title="Remove from plan">✕</button>
                       </div>
                     </div>

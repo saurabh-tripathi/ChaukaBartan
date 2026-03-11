@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import "./globals.css";
 import Link from "next/link";
+import { LogoutButton } from "@/components/LogoutButton";
 
 export const metadata: Metadata = {
   title: "ChaukaBartan",
@@ -13,6 +14,7 @@ const navLinks = [
   { href: "/tasks", label: "Tasks" },
   { href: "/habits", label: "Habits" },
   { href: "/plans", label: "Plans" },
+  { href: "/completed", label: "Completed" },
 ];
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
@@ -26,6 +28,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               {l.label}
             </Link>
           ))}
+          <LogoutButton />
         </nav>
         <main className="max-w-5xl mx-auto px-6 py-8">{children}</main>
       </body>

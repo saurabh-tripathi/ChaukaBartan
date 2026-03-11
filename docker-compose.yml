@@ -22,6 +22,7 @@ services:
     environment:
       DATABASE_URL: postgresql://chaukabartan:chaukabartan@db:5432/chaukabartan
       SECRET_KEY: local-dev-secret
+      APP_PASSWORD: "rukojar@007"
       ENVIRONMENT: development
       CORS_ORIGINS: "http://localhost:3000"
     depends_on:
@@ -36,6 +37,8 @@ services:
       - "3000:3000"
     environment:
       NEXT_PUBLIC_API_URL: http://localhost:8000
+      SECRET_KEY: local-dev-secret
+      APP_PASSWORD: "rukojar@007"
     depends_on:
       - app
 

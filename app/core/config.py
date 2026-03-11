@@ -6,6 +6,7 @@ from pydantic_settings import BaseSettings
 class Settings(BaseSettings):
     DATABASE_URL: str
     SECRET_KEY: str
+    APP_PASSWORD: str
     ENVIRONMENT: str = "development"
 
     class Config:
