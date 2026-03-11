@@ -3,17 +3,22 @@ locals {
   tags = { Project = var.project_name, Environment = var.environment }
 }
 
-# ── CloudWatch Log Group ──────────────────────────────────────────────────────
+# ── CloudWatch Log Groups ──────────────────────────────────────────────────────
 
 resource "aws_cloudwatch_log_group" "app" {
-  name              = "/ecs/${local.name}"
+  name              = "/ecs/${local.name}-api"
+  retention_in_days = 30
+  tags              = local.tags
+}
+
+resource "aws_cloudwatch_log_group" "frontend" {
+  name              = "/ecs/${local.name}-web"
   retention_in_days = 30
   tags              = local.tags
 }
 
 # ── IAM ───────────────────────────────────────────────────────────────────────
 
-# Execution role: used by the ECS control plane to pull images and inject secrets
 resource "aws_iam_role" "execution" {
   name = "${local.name}-execution"
 
@@ -46,12 +51,12 @@ resource "aws_iam_role_policy" "execution_secrets" {
       Resource = [
         var.database_url_secret_arn,
         var.secret_key_arn,
+        var.app_password_secret_arn,
       ]
     }]
   })
 }
 
-# Task role: identity of the running container (add permissions here as needed)
 resource "aws_iam_role" "task" {
   name = "${local.name}-task"
 
@@ -74,7 +79,7 @@ resource "aws_ecs_cluster" "this" {
 
   setting {
     name  = "containerInsights"
-    value = "disabled"  # enable for production; costs extra
+    value = "disabled"
   }
 
   tags = local.tags
@@ -91,10 +96,10 @@ resource "aws_ecs_cluster_capacity_providers" "this" {
   }
 }
 
-# ── Task Definition ───────────────────────────────────────────────────────────
+# ── Backend: FastAPI ───────────────────────────────────────────────────────────
 
 resource "aws_ecs_task_definition" "app" {
-  family                   = local.name
+  family                   = "${local.name}-api"
   requires_compatibilities = ["FARGATE"]
   network_mode             = "awsvpc"
   cpu                      = var.cpu
@@ -126,7 +131,7 @@ resource "aws_ecs_task_definition" "app" {
       options = {
         "awslogs-group"         = aws_cloudwatch_log_group.app.name
         "awslogs-region"        = var.region
-        "awslogs-stream-prefix" = "app"
+        "awslogs-stream-prefix" = "api"
       }
     }
   }])
@@ -134,15 +139,12 @@ resource "aws_ecs_task_definition" "app" {
   tags = local.tags
 }
 
-# ── ECS Service ───────────────────────────────────────────────────────────────
-
 resource "aws_ecs_service" "app" {
-  name            = local.name
+  name            = "${local.name}-api"
   cluster         = aws_ecs_cluster.this.id
   task_definition = aws_ecs_task_definition.app.arn
   desired_count   = var.desired_count
 
-  # Prefer Spot; fall back to on-demand if Spot is unavailable
   capacity_provider_strategy {
     capacity_provider = "FARGATE_SPOT"
     weight            = 100
@@ -157,16 +159,103 @@ resource "aws_ecs_service" "app" {
   network_configuration {
     subnets          = var.subnet_ids
     security_groups  = [var.ecs_sg_id]
-    assign_public_ip = true  # required — no NAT Gateway in this setup
+    assign_public_ip = true
   }
 
   load_balancer {
-    target_group_arn = var.target_group_arn
+    target_group_arn = var.backend_target_group_arn
     container_name   = "app"
     container_port   = var.app_port
   }
 
-  # Allow Terraform to update the image without replacing the service
+  lifecycle {
+    ignore_changes = [task_definition]
+  }
+
+  depends_on = [
+    aws_iam_role_policy_attachment.execution_managed,
+    aws_iam_role_policy.execution_secrets,
+  ]
+
+  tags = local.tags
+}
+
+# ── Frontend: Next.js ─────────────────────────────────────────────────────────
+
+resource "aws_ecs_task_definition" "frontend" {
+  family                   = "${local.name}-web"
+  requires_compatibilities = ["FARGATE"]
+  network_mode             = "awsvpc"
+  cpu                      = var.cpu
+  memory                   = var.memory
+  execution_role_arn       = aws_iam_role.execution.arn
+  task_role_arn            = aws_iam_role.task.arn
+
+  container_definitions = jsonencode([{
+    name      = "frontend"
+    image     = var.frontend_image
+    essential = true
+
+    portMappings = [{
+      containerPort = var.frontend_port
+      protocol      = "tcp"
+    }]
+
+    # SECRET_KEY and APP_PASSWORD are runtime secrets used by Next.js API routes
+    secrets = [
+      { name = "SECRET_KEY",    valueFrom = var.secret_key_arn },
+      { name = "APP_PASSWORD",  valueFrom = var.app_password_secret_arn },
+    ]
+
+    environment = [
+      { name = "ENVIRONMENT",          value = var.environment },
+      # Empty string = relative URLs; ALB routes /api/v1/* to the backend service
+      { name = "NEXT_PUBLIC_API_URL",  value = "" },
+      { name = "PORT",                 value = tostring(var.frontend_port) },
+    ]
+
+    logConfiguration = {
+      logDriver = "awslogs"
+      options = {
+        "awslogs-group"         = aws_cloudwatch_log_group.frontend.name
+        "awslogs-region"        = var.region
+        "awslogs-stream-prefix" = "web"
+      }
+    }
+  }])
+
+  tags = local.tags
+}
+
+resource "aws_ecs_service" "frontend" {
+  name            = "${local.name}-web"
+  cluster         = aws_ecs_cluster.this.id
+  task_definition = aws_ecs_task_definition.frontend.arn
+  desired_count   = var.desired_count
+
+  capacity_provider_strategy {
+    capacity_provider = "FARGATE_SPOT"
+    weight            = 100
+    base              = 0
+  }
+  capacity_provider_strategy {
+    capacity_provider = "FARGATE"
+    weight            = 1
+    base              = 0
+  }
+
+  network_configuration {
+    subnets          = var.subnet_ids
+    security_groups  = [var.ecs_sg_id]
+    assign_public_ip = true
+  }
+
+  load_balancer {
+    target_group_arn = var.frontend_target_group_arn
+    container_name   = "frontend"
+    container_port   = var.frontend_port
+  }
+
   lifecycle {
     ignore_changes = [task_definition]
   }

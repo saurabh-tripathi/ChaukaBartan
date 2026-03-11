@@ -9,6 +9,11 @@ variable "app_port" {
   default = 8000
 }
 
+variable "frontend_port" {
+  type    = number
+  default = 3000
+}
+
 variable "health_check_path" {
   type    = string
   default = "/health"

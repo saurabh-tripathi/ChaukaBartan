@@ -10,3 +10,9 @@ variable "secret_key" {
   type      = string
   sensitive = true
 }
+
+variable "app_password" {
+  type        = string
+  sensitive   = true
+  description = "Single-user login password for the web UI."
+}

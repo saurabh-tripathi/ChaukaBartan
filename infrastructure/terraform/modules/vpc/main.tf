@@ -92,17 +92,17 @@ resource "aws_security_group" "alb" {
   tags = merge(local.tags, { Name = "${local.name}-sg-alb" })
 }
 
-# ECS: accept app traffic from ALB only; full egress to reach AWS services
+# ECS: accept all traffic from ALB only (backend :8000 + frontend :3000)
 resource "aws_security_group" "ecs" {
   name        = "${local.name}-ecs"
   description = "ECS tasks — inbound from ALB only"
   vpc_id      = aws_vpc.this.id
 
   ingress {
-    description     = "App port from ALB"
-    from_port       = 8000
-    to_port         = 8000
-    protocol        = "tcp"
+    description     = "All ports from ALB (backend :8000, frontend :3000)"
+    from_port       = 0
+    to_port         = 0
+    protocol        = "-1"
     security_groups = [aws_security_group.alb.id]
   }
 

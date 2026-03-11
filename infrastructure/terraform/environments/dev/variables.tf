@@ -25,18 +25,30 @@ variable "db_username" {
 
 variable "app_image" {
   type        = string
-  description = "Full ECR image URI. Leave empty on first apply; update after pushing the image."
+  description = "Backend ECR image URI. Leave empty on first apply; fill after pushing."
   default     = ""
 }
 
-variable "domain_name" {
+variable "frontend_image" {
   type        = string
-  description = "Primary domain for HTTPS (e.g. chaukabartan.com). Leave empty to use HTTP only."
+  description = "Frontend ECR image URI. Leave empty on first apply; fill after pushing."
   default     = ""
 }
 
-variable "hosted_zone_id" {
+variable "root_domain" {
   type        = string
-  description = "Route 53 hosted zone ID for ACM DNS validation. Required when domain_name is set."
+  description = "Root domain managed in Route 53 (e.g. gradnuclei.com)."
   default     = ""
+}
+
+variable "subdomain" {
+  type        = string
+  description = "Subdomain for this project (e.g. chaukabartan → chaukabartan.gradnuclei.com)."
+  default     = "chaukabartan"
+}
+
+variable "app_password" {
+  type        = string
+  description = "Single-user login password for the web UI."
+  sensitive   = true
 }

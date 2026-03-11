@@ -1,15 +1,17 @@
 locals {
-  # If app_image isn't provided yet, use a lightweight placeholder so the ECS
-  # service can be created. Tasks will fail health checks until you push a real
-  # image, but the rest of the infrastructure is fully functional.
-  app_image = var.app_image != "" ? var.app_image : "${module.ecr.repository_url}:latest"
+  # Full domain for this project: chaukabartan.gradnuclei.com
+  domain_name = var.root_domain != "" ? "${var.subdomain}.${var.root_domain}" : ""
+
+  # Placeholder images for first apply (before real images are pushed)
+  app_image      = var.app_image      != "" ? var.app_image      : "${module.ecr.repository_url}:latest"
+  frontend_image = var.frontend_image != "" ? var.frontend_image : "${module.ecr.frontend_repository_url}:latest"
 }
 
-# ── Random passwords (stored in Terraform state — encrypted at rest) ───────────
+# ── Random secrets ────────────────────────────────────────────────────────────
 
 resource "random_password" "db" {
   length  = 24
-  special = false  # avoid chars that break connection string parsing
+  special = false
 }
 
 resource "random_password" "secret_key" {
@@ -23,6 +25,14 @@ module "vpc" {
   source       = "../../modules/vpc"
   project_name = var.project_name
   environment  = var.environment
+}
+
+module "dns" {
+  count        = var.root_domain != "" ? 1 : 0
+  source       = "../../modules/dns"
+  project_name = var.project_name
+  environment  = var.environment
+  root_domain  = var.root_domain
 }
 
 module "ecr" {
@@ -48,9 +58,9 @@ module "secrets" {
   project_name = var.project_name
   environment  = var.environment
 
-  # DATABASE_URL constructed from live RDS outputs — no manual step needed
   database_url = "postgresql://${var.db_username}:${random_password.db.result}@${module.rds.address}:${module.rds.port}/${module.rds.db_name}"
   secret_key   = random_password.secret_key.result
+  app_password = var.app_password
 }
 
 module "alb" {
@@ -61,8 +71,8 @@ module "alb" {
   vpc_id         = module.vpc.vpc_id
   subnet_ids     = module.vpc.public_subnet_ids
   alb_sg_id      = module.vpc.alb_sg_id
-  domain_name    = var.domain_name
-  hosted_zone_id = var.hosted_zone_id
+  domain_name    = local.domain_name
+  hosted_zone_id = var.root_domain != "" ? module.dns[0].zone_id : ""
 }
 
 module "ecs" {
@@ -71,12 +81,16 @@ module "ecs" {
   environment  = var.environment
   region       = var.region
 
-  app_image     = local.app_image
-  subnet_ids    = module.vpc.public_subnet_ids
-  ecs_sg_id     = module.vpc.ecs_sg_id
+  app_image      = local.app_image
+  frontend_image = local.frontend_image
 
-  target_group_arn         = module.alb.target_group_arn
-  database_url_secret_arn  = module.secrets.database_url_secret_arn
-  secret_key_arn           = module.secrets.secret_key_arn
-  ecr_repository_arn       = module.ecr.repository_arn
+  subnet_ids                = module.vpc.public_subnet_ids
+  ecs_sg_id                 = module.vpc.ecs_sg_id
+  backend_target_group_arn  = module.alb.backend_target_group_arn
+  frontend_target_group_arn = module.alb.frontend_target_group_arn
+
+  database_url_secret_arn = module.secrets.database_url_secret_arn
+  secret_key_arn          = module.secrets.secret_key_arn
+  app_password_secret_arn = module.secrets.app_password_secret_arn
+  ecr_repository_arn      = module.ecr.repository_arn
 }

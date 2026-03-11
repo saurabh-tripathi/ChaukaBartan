@@ -1,7 +1,7 @@
 locals {
-  name        = "${var.project_name}-${var.environment}"
-  tags        = { Project = var.project_name, Environment = var.environment }
-  https_enabled = var.domain_name != ""
+  name                   = "${var.project_name}-${var.environment}"
+  tags                   = { Project = var.project_name, Environment = var.environment }
+  https_enabled          = var.domain_name != ""
   dns_validation_enabled = var.domain_name != "" && var.hosted_zone_id != ""
 }
 
@@ -16,12 +16,15 @@ resource "aws_lb" "this" {
   tags               = local.tags
 }
 
-resource "aws_lb_target_group" "app" {
-  name        = local.name
+# ── Target Groups ─────────────────────────────────────────────────────────────
+
+# Backend: FastAPI on :8000
+resource "aws_lb_target_group" "backend" {
+  name        = "${local.name}-api"
   port        = var.app_port
   protocol    = "HTTP"
   vpc_id      = var.vpc_id
-  target_type = "ip"  # required for Fargate (awsvpc networking)
+  target_type = "ip"
 
   health_check {
     path                = var.health_check_path
@@ -34,7 +37,27 @@ resource "aws_lb_target_group" "app" {
   tags = local.tags
 }
 
-# ── HTTP listener — forwards when HTTPS is off, redirects when HTTPS is on ────
+# Frontend: Next.js on :3000
+resource "aws_lb_target_group" "frontend" {
+  name        = "${local.name}-web"
+  port        = var.frontend_port
+  protocol    = "HTTP"
+  vpc_id      = var.vpc_id
+  target_type = "ip"
+
+  health_check {
+    path                = "/"
+    healthy_threshold   = 2
+    unhealthy_threshold = 3
+    interval            = 30
+    timeout             = 5
+    matcher             = "200-399"
+  }
+
+  tags = local.tags
+}
+
+# ── HTTP listener — redirect to HTTPS when domain is set, else forward ────────
 
 resource "aws_lb_listener" "http" {
   load_balancer_arn = aws_lb.this.arn
@@ -57,19 +80,17 @@ resource "aws_lb_listener" "http" {
     for_each = local.https_enabled ? [] : [1]
     content {
       type             = "forward"
-      target_group_arn = aws_lb_target_group.app.arn
+      target_group_arn = aws_lb_target_group.frontend.arn
     }
   }
 }
 
-# ── ACM certificate + DNS validation (conditional on domain_name) ─────────────
+# ── ACM certificate + DNS validation ─────────────────────────────────────────
 
 resource "aws_acm_certificate" "app" {
   count             = local.https_enabled ? 1 : 0
   domain_name       = var.domain_name
   validation_method = "DNS"
-
-  subject_alternative_names = ["www.${var.domain_name}"]
 
   lifecycle {
     create_before_destroy = true
@@ -78,7 +99,6 @@ resource "aws_acm_certificate" "app" {
   tags = local.tags
 }
 
-# Route 53 DNS validation records (conditional on hosted_zone_id also being set)
 resource "aws_route53_record" "cert_validation" {
   for_each = local.dns_validation_enabled ? {
     for dvo in aws_acm_certificate.app[0].domain_validation_options :
@@ -104,7 +124,22 @@ resource "aws_acm_certificate_validation" "app" {
   ]
 }
 
-# ── HTTPS listener (conditional) ──────────────────────────────────────────────
+# ── Route 53 A record — subdomain → ALB ───────────────────────────────────────
+
+resource "aws_route53_record" "app" {
+  count   = local.dns_validation_enabled ? 1 : 0
+  zone_id = var.hosted_zone_id
+  name    = var.domain_name
+  type    = "A"
+
+  alias {
+    name                   = aws_lb.this.dns_name
+    zone_id                = aws_lb.this.zone_id
+    evaluate_target_health = true
+  }
+}
+
+# ── HTTPS listener with path-based routing ────────────────────────────────────
 
 resource "aws_lb_listener" "https" {
   count             = local.https_enabled ? 1 : 0
@@ -114,10 +149,29 @@ resource "aws_lb_listener" "https" {
   ssl_policy        = "ELBSecurityPolicy-TLS13-1-2-2021-06"
   certificate_arn   = aws_acm_certificate.app[0].arn
 
+  # Default: all traffic → Next.js frontend
   default_action {
     type             = "forward"
-    target_group_arn = aws_lb_target_group.app.arn
+    target_group_arn = aws_lb_target_group.frontend.arn
   }
 
   depends_on = [aws_acm_certificate_validation.app]
+}
+
+# Route /api/v1/* → FastAPI backend
+resource "aws_lb_listener_rule" "backend_api" {
+  count        = local.https_enabled ? 1 : 0
+  listener_arn = aws_lb_listener.https[0].arn
+  priority     = 10
+
+  action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.backend.arn
+  }
+
+  condition {
+    path_pattern {
+      values = ["/api/v1/*"]
+    }
+  }
 }

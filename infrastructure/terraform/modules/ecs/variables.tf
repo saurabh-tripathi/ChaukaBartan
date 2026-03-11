@@ -2,6 +2,7 @@ variable "project_name" { type = string }
 variable "environment"  { type = string }
 variable "region"       { type = string }
 variable "app_image"    { type = string }
+variable "frontend_image" { type = string }
 
 variable "cpu" {
   type    = number
@@ -23,10 +24,17 @@ variable "app_port" {
   default = 8000
 }
 
-variable "subnet_ids"       { type = list(string) }
-variable "ecs_sg_id"        { type = string }
-variable "target_group_arn" { type = string }
+variable "frontend_port" {
+  type    = number
+  default = 3000
+}
 
-variable "database_url_secret_arn" { type = string }
-variable "secret_key_arn"          { type = string }
-variable "ecr_repository_arn"      { type = string }
+variable "subnet_ids"                 { type = list(string) }
+variable "ecs_sg_id"                  { type = string }
+variable "backend_target_group_arn"   { type = string }
+variable "frontend_target_group_arn"  { type = string }
+
+variable "database_url_secret_arn"  { type = string }
+variable "secret_key_arn"           { type = string }
+variable "app_password_secret_arn"  { type = string }
+variable "ecr_repository_arn"       { type = string }

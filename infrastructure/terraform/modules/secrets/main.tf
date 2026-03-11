@@ -24,3 +24,14 @@ resource "aws_secretsmanager_secret_version" "secret_key" {
   secret_id     = aws_secretsmanager_secret.secret_key.id
   secret_string = var.secret_key
 }
+
+resource "aws_secretsmanager_secret" "app_password" {
+  name                    = "${local.prefix}/app_password"
+  recovery_window_in_days = 0
+  tags                    = local.tags
+}
+
+resource "aws_secretsmanager_secret_version" "app_password" {
+  secret_id     = aws_secretsmanager_secret.app_password.id
+  secret_string = var.app_password
+}
