@@ -19,6 +19,8 @@ class TaskCreate(BaseModel):
     is_active: bool = True
     parent_task_id: Optional[uuid.UUID] = None
     goal_id: Optional[uuid.UUID] = None
+    expected_duration_minutes: Optional[int] = None
+    tags: list[str] = []
 
 
 class TaskUpdate(BaseModel):
@@ -32,6 +34,8 @@ class TaskUpdate(BaseModel):
     is_active: Optional[bool] = None
     parent_task_id: Optional[uuid.UUID] = None
     goal_id: Optional[uuid.UUID] = None
+    expected_duration_minutes: Optional[int] = None
+    tags: Optional[list[str]] = None
 
 
 class TaskResponse(BaseModel):
@@ -48,6 +52,8 @@ class TaskResponse(BaseModel):
     is_active: bool
     parent_task_id: Optional[uuid.UUID]
     goal_id: Optional[uuid.UUID]
+    expected_duration_minutes: Optional[int]
+    tags: list[str]
     created_at: datetime
     updated_at: datetime
 
@@ -100,3 +106,35 @@ class TaskFeedbackResponse(BaseModel):
     notes: Optional[str]
     created_at: datetime
     updated_at: datetime
+
+
+# ── Flat instance response (for completed tasks page) ─────────────────────────
+
+class FlatInstanceTaskSummary(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    title: str
+    goal_id: Optional[uuid.UUID]
+    goal_title: Optional[str] = None
+    tags: list[str]
+    expected_duration_minutes: Optional[int]
+
+
+class FlatInstanceFeedbackSummary(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    duration_minutes: Optional[int]
+    difficulty_rating: Optional[int]
+    satisfaction_rating: Optional[int]
+    notes: Optional[str]
+
+
+class FlatInstanceResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    task_instance_id: uuid.UUID
+    scheduled_date: date
+    status: InstanceStatus
+    task: FlatInstanceTaskSummary
+    feedback: Optional[FlatInstanceFeedbackSummary]

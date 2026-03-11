@@ -5,14 +5,15 @@ import { Badge } from "@/components/Badge";
 
 const FREQS: HabitFrequency[] = ["DAILY", "WEEKLY"];
 const PRIORITIES: Priority[] = ["LOW", "MEDIUM", "HIGH", "CRITICAL"];
-const STATUSES: HabitStatus[] = ["ACTIVE", "SET", "LAPSED", "ABANDONED"];
+const STATUSES: HabitStatus[] = ["TODO", "ACTIVE", "SET", "LAPSED", "ABANDONED"];
 
-const blank: HabitCreate = { title: "", frequency: "DAILY", priority: "MEDIUM", status: "ACTIVE" as HabitStatus };
+const blank: HabitCreate = { title: "", frequency: "DAILY", priority: "MEDIUM", status: "ACTIVE" as HabitStatus, tags: [] };
 
 export default function HabitsPage() {
   const [habits, setHabits] = useState<Habit[]>([]);
   const [goals, setGoals] = useState<Goal[]>([]);
   const [form, setForm] = useState<HabitCreate>(blank);
+  const [tagsInput, setTagsInput] = useState("");
   const [editing, setEditing] = useState<string | null>(null);
   const [showForm, setShowForm] = useState(false);
   const [expanded, setExpanded] = useState<string | null>(null);
@@ -24,9 +25,10 @@ export default function HabitsPage() {
 
   const save = async () => {
     try {
-      if (editing) { await Habits.update(editing, form); }
-      else { await Habits.create(form); }
-      setForm(blank); setEditing(null); setShowForm(false); load();
+      const data = { ...form, tags: tagsInput.split(",").map((t) => t.trim()).filter(Boolean) };
+      if (editing) { await Habits.update(editing, data); }
+      else { await Habits.create(data); }
+      setForm(blank); setTagsInput(""); setEditing(null); setShowForm(false); load();
     } catch (e: unknown) { setError(e instanceof Error ? e.message : String(e)); }
   };
 
@@ -36,7 +38,8 @@ export default function HabitsPage() {
   };
 
   const startEdit = (h: Habit) => {
-    setForm({ title: h.title, description: h.description ?? undefined, frequency: h.frequency, priority: h.priority, status: h.status, goal_id: h.goal_id ?? undefined });
+    setForm({ title: h.title, description: h.description ?? undefined, frequency: h.frequency, priority: h.priority, status: h.status, goal_id: h.goal_id ?? undefined, expected_duration_minutes: h.expected_duration_minutes ?? undefined, tags: h.tags });
+    setTagsInput((h.tags ?? []).join(", "));
     setEditing(h.id); setShowForm(true);
   };
 
@@ -62,7 +65,7 @@ export default function HabitsPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold">Habits</h1>
-        <button onClick={() => { setForm(blank); setEditing(null); setShowForm(true); }} className="bg-indigo-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-indigo-700">
+        <button onClick={() => { setForm(blank); setTagsInput(""); setEditing(null); setShowForm(true); }} className="bg-indigo-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-indigo-700">
           + New Habit
         </button>
       </div>
@@ -102,6 +105,14 @@ export default function HabitsPage() {
                 {goals.map((g) => <option key={g.id} value={g.id}>{g.title}</option>)}
               </select>
             </div>
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">Expected time (minutes)</label>
+              <input type="number" min={1} className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" value={form.expected_duration_minutes ?? ""} onChange={(e) => setForm({ ...form, expected_duration_minutes: e.target.value ? Number(e.target.value) : undefined })} />
+            </div>
+            <div className="col-span-2">
+              <label className="block text-xs text-gray-500 mb-1">Tags (comma-separated)</label>
+              <input className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" placeholder="work, morning, health" value={tagsInput} onChange={(e) => setTagsInput(e.target.value)} />
+            </div>
             <div className="col-span-2">
               <label className="block text-xs text-gray-500 mb-1">Description</label>
               <textarea className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" rows={2} value={form.description ?? ""} onChange={(e) => setForm({ ...form, description: e.target.value || undefined })} />
@@ -122,11 +133,25 @@ export default function HabitsPage() {
               <div className="space-y-1">
                 <div className="flex items-center gap-2 flex-wrap">
                   <span className="font-medium">{h.title}</span>
+                  {h.expected_duration_minutes && (
+                    <span className="text-xs text-gray-400">{h.expected_duration_minutes}m</span>
+                  )}
                   <Badge value={h.priority} />
                   <Badge value={h.status} />
                   <Badge value={h.frequency} />
-                  <span className="text-xs text-gray-500">🔥 {h.streak_count} streak</span>
+                  {h.streak_count > 0 && (
+                    <span className="text-xs font-semibold px-1.5 py-0.5 rounded bg-orange-100 text-orange-600">
+                      🔥 {h.streak_count} {h.streak_count === 1 ? "day" : "days"}
+                    </span>
+                  )}
                 </div>
+                {(h.tags ?? []).length > 0 && (
+                  <div className="flex flex-wrap gap-1">
+                    {h.tags.map((tag) => (
+                      <span key={tag} className="text-xs bg-gray-100 text-gray-500 rounded px-1.5 py-0.5">{tag}</span>
+                    ))}
+                  </div>
+                )}
                 {h.description && <p className="text-sm text-gray-500">{h.description}</p>}
               </div>
               <div className="flex gap-2 shrink-0">

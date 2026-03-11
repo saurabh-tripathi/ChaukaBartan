@@ -1,14 +1,18 @@
 import uuid
+from datetime import date
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from app.core.database import get_db
 from app.models.enums import Priority
 from app.models.goal import Goal
 from app.models.task import Frequency, InstanceStatus, Task, TaskFeedback, TaskInstance, TaskType
 from app.schemas.task import (
+    FlatInstanceFeedbackSummary,
+    FlatInstanceResponse,
+    FlatInstanceTaskSummary,
     TaskCreate,
     TaskFeedbackCreate,
     TaskFeedbackResponse,
@@ -32,6 +36,7 @@ def list_tasks(
     frequency: Optional[Frequency] = Query(None),
     priority: Optional[Priority] = Query(None),
     goal_id: Optional[uuid.UUID] = Query(None),
+    tags: list[str] = Query(default=[]),
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=200),
     db: Session = Depends(get_db),
@@ -47,6 +52,8 @@ def list_tasks(
         q = q.filter(Task.priority == priority)
     if goal_id is not None:
         q = q.filter(Task.goal_id == goal_id)
+    if tags:
+        q = q.filter(Task.tags.overlap(tags))
     return q.order_by(Task.created_at.desc()).offset(skip).limit(limit).all()
 
 
@@ -61,6 +68,67 @@ def create_task(body: TaskCreate, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(task)
     return task
+
+
+@router.get("/instances", response_model=list[FlatInstanceResponse])
+def list_all_instances(
+    instance_status: InstanceStatus = Query(InstanceStatus.COMPLETED, alias="status"),
+    from_date: Optional[date] = Query(None),
+    to_date: Optional[date] = Query(None),
+    goal_id: Optional[uuid.UUID] = Query(None),
+    search: Optional[str] = Query(None),
+    skip: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=500),
+    db: Session = Depends(get_db),
+):
+    q = (
+        db.query(TaskInstance)
+        .join(TaskInstance.task)
+        .options(
+            joinedload(TaskInstance.task).joinedload(Task.goal),
+            joinedload(TaskInstance.feedback),
+        )
+        .filter(TaskInstance.status == instance_status)
+    )
+    if from_date:
+        q = q.filter(TaskInstance.scheduled_date >= from_date)
+    if to_date:
+        q = q.filter(TaskInstance.scheduled_date <= to_date)
+    if goal_id:
+        q = q.filter(Task.goal_id == goal_id)
+    if search:
+        q = q.filter(Task.title.ilike(f"%{search}%"))
+
+    instances = q.order_by(TaskInstance.scheduled_date.desc()).offset(skip).limit(limit).all()
+
+    results = []
+    for inst in instances:
+        task = inst.task
+        goal_title = task.goal.title if task.goal else None
+        task_summary = FlatInstanceTaskSummary(
+            id=task.id,
+            title=task.title,
+            goal_id=task.goal_id,
+            goal_title=goal_title,
+            tags=task.tags or [],
+            expected_duration_minutes=task.expected_duration_minutes,
+        )
+        feedback_summary = None
+        if inst.feedback:
+            feedback_summary = FlatInstanceFeedbackSummary(
+                duration_minutes=inst.feedback.duration_minutes,
+                difficulty_rating=inst.feedback.difficulty_rating,
+                satisfaction_rating=inst.feedback.satisfaction_rating,
+                notes=inst.feedback.notes,
+            )
+        results.append(FlatInstanceResponse(
+            task_instance_id=inst.id,
+            scheduled_date=inst.scheduled_date,
+            status=inst.status,
+            task=task_summary,
+            feedback=feedback_summary,
+        ))
+    return results
 
 
 @router.get("/{task_id}", response_model=TaskResponse)

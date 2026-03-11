@@ -1,4 +1,5 @@
 import uuid
+from datetime import date, datetime, timedelta
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -16,7 +17,34 @@ from app.schemas.habit import (
     HabitUpdate,
 )
 
+_STREAK_SET_THRESHOLD = 14  # days
+
 router = APIRouter(prefix="/habits", tags=["habits"])
+
+
+def _compute_streak(habit_id: uuid.UUID, db: Session) -> int:
+    """Compute the current streak from habit_logs. No DB writes."""
+    today = date.today()
+    yesterday = today - timedelta(days=1)
+
+    logs = (
+        db.query(HabitLog)
+        .filter(HabitLog.habit_id == habit_id)
+        .order_by(HabitLog.logged_date.desc())
+        .all()
+    )
+    dates = sorted({log.logged_date for log in logs}, reverse=True)
+
+    if not dates or dates[0] < yesterday:
+        return 0
+
+    streak = 1
+    for i in range(1, len(dates)):
+        if dates[i] == dates[i - 1] - timedelta(days=1):
+            streak += 1
+        else:
+            break
+    return streak
 
 
 # ── Habit CRUD ────────────────────────────────────────────────────────────────
@@ -40,7 +68,14 @@ def list_habits(
         q = q.filter(Habit.priority == priority)
     if goal_id is not None:
         q = q.filter(Habit.goal_id == goal_id)
-    return q.order_by(Habit.created_at.desc()).offset(skip).limit(limit).all()
+    habits = q.order_by(Habit.created_at.desc()).offset(skip).limit(limit).all()
+    result = []
+    for habit in habits:
+        streak = _compute_streak(habit.id, db)
+        r = HabitResponse.model_validate(habit)
+        r.streak_count = streak
+        result.append(r)
+    return result
 
 
 @router.post("", response_model=HabitResponse, status_code=status.HTTP_201_CREATED)
@@ -59,7 +94,9 @@ def get_habit(habit_id: uuid.UUID, db: Session = Depends(get_db)):
     habit = db.get(Habit, habit_id)
     if not habit:
         raise HTTPException(status_code=404, detail="Habit not found")
-    return habit
+    r = HabitResponse.model_validate(habit)
+    r.streak_count = _compute_streak(habit.id, db)
+    return r
 
 
 @router.patch("/{habit_id}", response_model=HabitResponse)
@@ -88,7 +125,7 @@ def delete_habit(habit_id: uuid.UUID, db: Session = Depends(get_db)):
 # ── Habit Logs ────────────────────────────────────────────────────────────────
 
 @router.post(
-    "/{habit_id}/log",
+    "/{habit_id}/logs",
     response_model=HabitLogResponse,
     status_code=status.HTTP_201_CREATED,
 )
@@ -96,6 +133,34 @@ def log_habit(habit_id: uuid.UUID, body: HabitLogCreate, db: Session = Depends(g
     habit = db.get(Habit, habit_id)
     if not habit:
         raise HTTPException(status_code=404, detail="Habit not found")
+
+    # Prevent duplicate log for the same date
+    duplicate = (
+        db.query(HabitLog)
+        .filter(HabitLog.habit_id == habit_id, HabitLog.logged_date == body.logged_date)
+        .first()
+    )
+    if duplicate:
+        raise HTTPException(status_code=409, detail="Already logged for this date")
+
+    # Update streak
+    yesterday = body.logged_date - timedelta(days=1)
+    last_log = (
+        db.query(HabitLog)
+        .filter(HabitLog.habit_id == habit_id, HabitLog.logged_date < body.logged_date)
+        .order_by(HabitLog.logged_date.desc())
+        .first()
+    )
+    if last_log and last_log.logged_date == yesterday:
+        habit.streak_count += 1
+    else:
+        habit.streak_count = 1
+
+    # Auto-promote to SET once streak threshold is reached
+    if habit.streak_count >= _STREAK_SET_THRESHOLD and habit.status == HabitStatus.ACTIVE:
+        habit.status = HabitStatus.SET
+        habit.set_at = datetime.utcnow()
+
     log = HabitLog(habit_id=habit_id, **body.model_dump())
     db.add(log)
     db.commit()

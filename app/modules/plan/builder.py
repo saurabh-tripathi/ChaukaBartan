@@ -30,7 +30,7 @@ from sqlalchemy.orm import Session
 from app.models.enums import Priority
 from app.models.habit import Habit, HabitFrequency, HabitLog, HabitStatus
 from app.models.plan import Plan, PlanItem
-from app.models.task import Frequency, Task, TaskInstance
+from app.models.task import Frequency, InstanceStatus, Task, TaskInstance
 
 _PRIORITY_RANK: dict[Priority, int] = {
     Priority.CRITICAL: 0,
@@ -89,6 +89,14 @@ def generate_plan(db: Session, plan_date: date, notes: Optional[str] = None) -> 
     """
     Generate and persist a Plan for plan_date.
     Raises ValueError if a plan already exists for that date.
+
+    Carry-over: any TaskInstance with status PENDING or IN_PROGRESS from a previous
+    day is pulled into this plan as-is (preserving its original scheduled_date so the
+    UI can show how long it has been carried over).  A fresh instance is NOT created
+    for the same task, avoiding duplicates.
+
+    Streak reset: active habits that were not logged as of (plan_date − 1 day) have
+    their streak_count reset to 0 before the plan items are built.
     """
     existing = db.query(Plan).filter(Plan.plan_date == plan_date).first()
     if existing:
@@ -96,28 +104,72 @@ def generate_plan(db: Session, plan_date: date, notes: Optional[str] = None) -> 
 
     plan = Plan(plan_date=plan_date, notes=notes)
     db.add(plan)
-    db.flush()  # assigns plan.id before creating items
+    db.flush()
 
-    # Collect (priority_rank, title, type, model) tuples
-    candidates: list[tuple[int, str, str, Union[Task, Habit]]] = []
+    yesterday = plan_date - timedelta(days=1)
 
-    for task in db.query(Task).filter(Task.is_active == True).all():
-        if _task_is_due(task, plan_date, db):
-            candidates.append((_PRIORITY_RANK[task.priority], task.title, "task", task))
-
-    for habit in (
+    # ── 1. Reset streaks for habits not logged since yesterday ────────────────
+    active_habits = (
         db.query(Habit)
         .filter(Habit.status.in_([HabitStatus.ACTIVE, HabitStatus.SET]))
         .all()
-    ):
+    )
+    for habit in active_habits:
+        if habit.streak_count == 0:
+            continue
+        last_log = (
+            db.query(HabitLog)
+            .filter(HabitLog.habit_id == habit.id)
+            .order_by(HabitLog.logged_date.desc())
+            .first()
+        )
+        if last_log is None or last_log.logged_date < yesterday:
+            habit.streak_count = 0
+    db.flush()
+
+    # ── 2. Collect carry-over task instances (unfinished from previous days) ──
+    carried_instances = (
+        db.query(TaskInstance)
+        .filter(
+            TaskInstance.scheduled_date < plan_date,
+            TaskInstance.status.in_([InstanceStatus.PENDING, InstanceStatus.IN_PROGRESS]),
+        )
+        .all()
+    )
+    carried_task_ids = {inst.task_id for inst in carried_instances}
+
+    # ── 3. Build candidates ───────────────────────────────────────────────────
+    candidates: list[tuple[int, str, str, Union[Task, Habit, TaskInstance]]] = []
+
+    # Carry-overs (skip inactive tasks or tasks past end_date)
+    for inst in carried_instances:
+        task = inst.task
+        if not task.is_active:
+            continue
+        if task.end_date and plan_date > task.end_date:
+            continue
+        candidates.append((_PRIORITY_RANK[task.priority], task.title, "carry_over", inst))
+
+    # Regular due tasks (skip tasks already covered by a carry-over)
+    for task in db.query(Task).filter(Task.is_active == True).all():
+        if task.id in carried_task_ids:
+            continue
+        if _task_is_due(task, plan_date, db):
+            candidates.append((_PRIORITY_RANK[task.priority], task.title, "task", task))
+
+    # Due habits
+    for habit in active_habits:
         if _habit_is_due(habit, plan_date, db):
             candidates.append((_PRIORITY_RANK[habit.priority], habit.title, "habit", habit))
 
     candidates.sort(key=lambda c: (c[0], c[1]))
 
+    # ── 4. Create plan items ──────────────────────────────────────────────────
     for order, (_, _, item_type, item) in enumerate(candidates):
-        if item_type == "task":
-            # Reuse an existing instance for this date if one already exists
+        if item_type == "carry_over":
+            # item is an existing TaskInstance — reuse it directly
+            db.add(PlanItem(plan_id=plan.id, task_instance_id=item.id, display_order=order))
+        elif item_type == "task":
             instance = (
                 db.query(TaskInstance)
                 .filter(
@@ -135,4 +187,4 @@ def generate_plan(db: Session, plan_date: date, notes: Optional[str] = None) -> 
             db.add(PlanItem(plan_id=plan.id, habit_id=item.id, display_order=order))
 
     db.commit()
-    return plan.id  # return ID so caller can re-query with eager loading
+    return plan.id

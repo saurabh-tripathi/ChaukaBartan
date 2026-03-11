@@ -3,6 +3,7 @@ const colors: Record<string, string> = {
   MEDIUM: "bg-blue-100 text-blue-700",
   HIGH: "bg-orange-100 text-orange-700",
   CRITICAL: "bg-red-100 text-red-700",
+  TODO: "bg-purple-100 text-purple-700",
   ACTIVE: "bg-green-100 text-green-700",
   COMPLETED: "bg-indigo-100 text-indigo-700",
   PAUSED: "bg-yellow-100 text-yellow-700",
